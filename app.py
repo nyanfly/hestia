@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import datetime
 import email.utils
 import mailbox
 import re
@@ -10,6 +11,8 @@ import tornado.websocket
 
 MAILBOX_PATH = '/home/pi/Maildir'
 PORT = 8888
+
+MESSAGE_EXPIRY_TIME = datetime.timedelta(7)  # 7 days
 
 def parse_body(message):
     if message.is_multipart():
@@ -75,6 +78,22 @@ def check_for_messages(mail, read_messages):
 
     tornado.ioloop.IOLoop.current().call_later(1, check_for_messages, mail, read_messages)
 
+def delete_old_messages(mail):
+    unread_keys = (k for k in mail.keys())
+
+    for k in mail.keys():
+        message = mail.get_message(k)
+        posix_timestamp = email.utils.mktime_tz(email.utils.parsedate_tz(message['date']))
+        date = datetime.datetime.fromtimestamp(posix_timestamp)
+
+        if date < (datetime.datetime.today() - MESSAGE_EXPIRY_TIME):
+            mail.remove(k)
+
+        read_messages.remove(k)
+
+    # call myself with a timer for 1 hour, since we don't need to run that often
+    tornado.ioloop.IOLoop.current().call_later(3600, delete_old_messages, mail)
+
 def is_not_spam(message):
     # rudimentary spam filtering -- reject if it's not from a list of good addressses
     return re.search(r"@(mit|gmail|yahoo|hotmail|outlook)\.(edu|com)", message['from'])
@@ -109,5 +128,6 @@ if __name__ == "__main__":
     mail = mailbox.Maildir(MAILBOX_PATH)
     read_messages = set()
     tornado.ioloop.IOLoop.current().call_later(1, check_for_messages, mail, read_messages)
+    tornado.ioloop.IOLoop.current().call_later(1, delete_old_messages, mail)
 
     tornado.ioloop.IOLoop.current().start()
